@@ -1,5 +1,5 @@
-// Public configuration. Never put the access key here.
-// Leave apiBase empty for same-origin local hosting or enter the HTTPS backend URL.
+// Public backend URL. Never put an access key in this file.
+// This temporary tunnel URL changes if its process is restarted.
 globalThis.FILE_BRIDGE_CONFIG = Object.freeze({
-  apiBase: ''
+  apiBase: "https://bars-nec-nomination-general.trycloudflare.com"
 });
