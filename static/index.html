@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#101827">
+  <title>File Bridge · 文件传输</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect width='40' height='40' rx='10' fill='%232563eb'/%3E%3Cpath d='M10 16h20M25 11l5 5-5 5M30 26H10m5-5-5 5 5 5' fill='none' stroke='white' stroke-width='3'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="./style.css">
+  <link rel="stylesheet" href="./login.css">
+  <script src="./config.js" defer></script>
+  <script src="./sha256.js" defer></script>
+  <script src="./app.js" defer></script>
+</head>
+<body>
+  <section id="loginView" class="login-view" aria-labelledby="loginTitle">
+    <div class="login-card">
+      <a class="brand login-brand" href="./"><span class="brand-icon">⇄</span><span>File Bridge<small>安全抵达，每一字节</small></span></a>
+      <div class="eyebrow">WELCOME BACK</div><h1 id="loginTitle">登录文件传输</h1><p>连接你的接收服务器，开始安全传输。</p>
+      <form id="loginForm" class="login-form">
+        <label for="serverUrl">接收服务地址</label><input id="serverUrl" type="url" placeholder="https://upload.example.com" autocomplete="url" spellcheck="false" required>
+        <label for="token">访问密钥</label><input id="token" type="password" placeholder="输入服务器访问密钥" autocomplete="current-password" required>
+        <div id="loginError" class="login-error" role="alert" hidden></div>
+        <button id="loginButton" class="button primary" type="submit">登录 <span>→</span></button>
+      </form>
+      <p class="login-hint">登录信息仅保留在当前标签页；文件直接发送到接收服务器。</p>
+    </div>
+  </section>
+  <div id="appView" hidden>
+  <aside class="sidebar">
+    <a class="brand" href="./" aria-label="File Bridge 首页"><span class="brand-icon">⇄</span><span>File Bridge<small>安全抵达，每一字节</small></span></a>
+    <div class="nav-label">工作空间</div>
+    <a class="nav-item selected" href="#upload"><span>↥</span> 文件上传 <span class="nav-dot"></span></a>
+    <a class="nav-item" href="#history"><span>◷</span> 接收记录</a>
+    <div class="sidebar-bottom"><span class="tiny-dot"></span> 自部署传输服务<small>内网浏览器 → 接收服务器</small></div>
+  </aside>
+  <div class="shell">
+    <header><div class="breadcrumb">工作空间 <span>/</span> 文件上传</div><div class="header-actions"><div class="connection"><span id="connectionDot" class="tiny-dot offline"></span><span id="connectionText">等待登录</span></div><button id="logoutButton" type="button" class="button ghost">退出登录</button></div></header>
+    <main>
+      <section class="page-title"><div><div class="eyebrow">FILE TRANSFER</div><h1>让大文件，轻松抵达。</h1><p>从内网发送文件，直接保存到服务器磁盘。</p></div><span class="local-badge">↗ 直达本机存储</span></section>
+      <div class="stats"><div><span class="stat-icon">▤</span><div><small>单文件上限</small><strong>50 <em>GB</em></strong></div></div><div><span class="stat-icon">▦</span><div><small>每片大小</small><strong>1 <em>MB</em></strong></div></div><div><span class="stat-icon">⤴</span><div><small>传输保障</small><strong class="stat-word">断点续传</strong></div></div></div>
+      <section class="panel access-panel"><div class="panel-heading"><div><h2>接收服务器</h2><p id="serverAddress">登录后显示</p></div><span class="step-tag">01</span></div><div class="destination"><span>▱</span><div><small>服务器保存目录</small><code id="destination">登录后显示</code></div><span id="destinationBadge" class="tag">待连接</span></div></section>
+      <section id="upload" class="panel upload-panel"><div class="panel-heading"><div><h2>上传文件</h2><p>支持任意文件类型，可一次选择多个文件。</p></div><span class="step-tag">02</span></div><label id="dropzone" class="dropzone" for="fileInput" tabindex="0"><input id="fileInput" class="sr-only" type="file" multiple><span class="upload-icon">↥</span><strong>拖拽文件到这里，或 <span>选择文件</span></strong><small>单文件最大 50 GB · 每片 ≤ 1,000,000 字节 · 自动重试</small></label><div class="options"><label>并发分片 <select id="concurrency"><option value="1">1 路 · 稳定优先</option><option value="2" selected>2 路 · 均衡模式</option><option value="4">4 路 · 速度优先</option></select></label><label class="checkbox"><input id="fresh" type="checkbox">创建全新任务</label><span class="resume-tip">重新选择同一文件即可续传</span></div><div id="queue" class="queue"></div><div class="upload-footer"><span id="queueSummary">尚未选择文件</span><div class="actions"><button id="clearButton" type="button" class="button ghost">清空列表</button><button id="startButton" type="button" class="button primary" disabled>开始上传 <span>↥</span></button></div></div></section>
+      <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
+      <section id="history" class="panel history-panel"><div class="panel-heading"><div><h2>最近接收</h2><p>查看已完成文件和可继续上传的任务。</p></div><button class="refresh" id="refreshButton" aria-label="刷新接收记录">↻</button></div><div class="table-wrap"><table><thead><tr><th>文件名称</th><th>文件大小</th><th>状态</th><th>操作</th></tr></thead><tbody id="historyRows"><tr><td colspan="4" class="empty-state">连接服务器后显示接收记录</td></tr></tbody></table></div></section>
+      <footer><span><span class="tiny-dot"></span> 分片 SHA-256 校验 · 进度持久保存</span><span>FILE BRIDGE / 01</span></footer>
+    </main>
+  </div>
+  </div>
+</body>
+</html>
