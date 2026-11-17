@@ -58,6 +58,54 @@ function bytes(n) {
   do {n/=1000;i++;} while(n>=1000 && i<units.length-1);
   return n.toFixed(n>=100 ? 0 : n>=10 ? 1 : 2) + ' ' + units[i];
 }
+function formatDuration(seconds) {
+  if(!Number.isFinite(seconds) || seconds<0)return '计算中';
+  if(seconds<1)return '少于1秒';
+  const total=Math.ceil(seconds),days=Math.floor(total/86400),hours=Math.floor(total/3600)%24,
+    minutes=Math.floor(total/60)%60,secs=total%60;
+  if(days)return `${days}天${hours?hours+'小时':''}`;
+  if(hours)return `${hours}小时${minutes?minutes+'分':''}`;
+  if(minutes)return `${minutes}分${secs?secs+'秒':''}`;
+  return `${secs}秒`;
+}
+function elapsedSeconds(job,now=performance.now()) {
+  return ((job.elapsedMs||0)+(job.activeSince==null?0:Math.max(0,now-job.activeSince)))/1000;
+}
+function freezeTiming(job,now=performance.now()) {
+  if(job.activeSince!=null) {
+    job.elapsedMs=(job.elapsedMs||0)+Math.max(0,now-job.activeSince);
+    job.activeSince=null;
+  }
+}
+function beginPhase(job,name,total,now=performance.now()) {
+  job.phase=name;
+  job.timingPhase={total,done:0,started:now,lastProgress:now,samples:[{at:now,bytes:0}]};
+}
+function recordPhaseProgress(job,size,now=performance.now()) {
+  const phase=job.timingPhase;
+  phase.done+=size;phase.lastProgress=now;
+  phase.samples.push({at:now,bytes:phase.done});
+}
+function phaseRate(job,now=performance.now()) {
+  const phase=job.timingPhase;
+  // Allow a short warm-up and stop extrapolating when acknowledgements stall.
+  if(!phase || phase.done<=0 || now-phase.started<2000 || now-phase.lastProgress>15000)return null;
+  while(phase.samples.length>1 && phase.samples[1].at<=now-15000)phase.samples.shift();
+  const baseline=phase.samples[0],seconds=(now-baseline.at)/1000;
+  return seconds>0 && phase.done>baseline.bytes?(phase.done-baseline.bytes)/seconds:null;
+}
+function timingText(job,now=performance.now()) {
+  if(job.state==='waiting')return '开始传输后估算剩余时间';
+  const elapsed=`已用时 ${formatDuration(elapsedSeconds(job,now))}`;
+  if(job.state==='complete')return elapsed;
+  if(job.state==='paused')return elapsed+' · 已暂停，继续后重新估算';
+  if(job.state==='error')return elapsed+' · 传输中断，重试后重新估算';
+  if(job.phase==='finalizing')return elapsed+' · 正在保存文件';
+  if(job.phase==='preparing')return elapsed+' · 正在识别文件';
+  const rate=phaseRate(job,now),label=job.phase==='verifying'?'预计校验剩余':'预计上传剩余';
+  if(!rate)return elapsed+' · '+label+'：计算中';
+  return elapsed+' · '+label+'：约 '+formatDuration(Math.max(0,job.timingPhase.total-job.timingPhase.done)/rate);
+}
 function notice(message, type='') {
   $('notice').textContent=message;
   $('notice').className='notice '+type;
@@ -133,12 +181,13 @@ function renderQueue() {
     const details=document.createElement('div');details.className='file-details';
     const name=document.createElement('div');name.className='file-name';name.textContent=job.file.name;name.title=job.file.name;
     const meta=document.createElement('div');meta.className='file-meta';
+    const timing=document.createElement('div');timing.className='file-timing';
     const state=document.createElement('div');state.className='file-state';
     const progress=document.createElement('div');progress.className='progress';
     const fill=document.createElement('div');fill.className='progress-fill';
     progress.setAttribute('role','progressbar');progress.setAttribute('aria-label',job.file.name+' 上传进度');progress.setAttribute('aria-valuemin','0');progress.setAttribute('aria-valuemax','100');
-    progress.append(fill);details.append(name,meta);line.append(icon,details,state);wrap.append(line,progress);$('queue').append(wrap);
-    job.ui={meta,state,fill,progress};paintJob(job);
+    progress.append(fill);details.append(name,meta,timing);line.append(icon,details,state);wrap.append(line,progress);$('queue').append(wrap);
+    job.ui={meta,timing,state,fill,progress};paintJob(job);
   });
   updateControls();
 }
@@ -146,8 +195,10 @@ function paintJob(job) {
   if(!job.ui) return;
   const percent=job.file.size?Math.min(100,100*(job.done||0)/job.file.size):job.state==='complete'?100:0;
   job.ui.fill.style.width=percent+'%';job.ui.progress.setAttribute('aria-valuenow',Math.floor(percent));
-  const speed=job.startTime && job.transferred?` · ${bytes(job.transferred/((performance.now()-job.startTime)/1000))}/s`:'';
+  const now=performance.now(),rate=job.state==='uploading'?phaseRate(job,now):null;
+  const speed=rate && job.phase==='uploading'?` · ${bytes(rate)}/s`:'';
   job.ui.meta.textContent=`${bytes(job.done||0)} / ${bytes(job.file.size)}${speed}`;
+  job.ui.timing.textContent=timingText(job,now);
   job.ui.state.textContent=job.message||'等待上传';
   job.ui.state.className='file-state'+(job.state==='error'?' error':'');
 }
@@ -173,13 +224,14 @@ async function fingerprint(file,signal) {
   return sha256(new TextEncoder().encode(JSON.stringify([file.name,file.size,file.lastModified,...hashes])));
 }
 async function transfer(job,signal) {
+  job.activeSince=performance.now();job.phase='preparing';job.timingPhase=null;
   job.state='uploading';job.message='识别文件，查找续传进度…';paintJob(job);
   job.fingerprint ||= await fingerprint(job.file,signal);
   job.requestKey ||= Array.from(crypto.getRandomValues(new Uint8Array(16)),x=>x.toString(16).padStart(2,'0')).join('');
   checkAbort(signal);
   const info=await jsonApi('/api/uploads',{name:job.file.name,size:job.file.size,fingerprint:job.fingerprint,fresh:job.fresh??$('fresh').checked,request_key:job.requestKey},{signal,attempts:3});
   // A successful create makes subsequent starts resume this task, even if fresh was checked.
-  job.fresh=false;job.id=info.id;job.done=info.received_bytes;job.transferred=0;job.startTime=performance.now();
+  job.fresh=false;job.id=info.id;job.done=info.received_bytes;job.transferred=0;
   const bitmap=Uint8Array.from(atob(info.bitmap),c=>c.charCodeAt(0));
   const has=index=>!!(bitmap[index>>3]&(1<<(index%8)));
   const hashPages=new Map();
@@ -188,46 +240,56 @@ async function transfer(job,signal) {
     if(!hashPages.has(start)) hashPages.set(start,api(`/api/uploads/${info.id}/hashes?start=${start}&limit=512`,{signal,attempts:3}));
     return hashPages.get(start);
   }
-  let cursor=0,checked=0;
-  const worker=async()=>{
-    while(cursor<info.total) {
-      checkAbort(signal);
-      const index=cursor++;
-      const chunk=job.file.slice(index*info.chunk_size,Math.min((index+1)*info.chunk_size,job.file.size));
-      const data=await chunk.arrayBuffer();
-      checkAbort(signal);
-      const digest=await sha256(data);
-      checkAbort(signal);
-      if(has(index)) {
-        const hashes=await hashPage(index);
-        if(hashes[String(index)]!==digest) throw new Error('文件内容与已上传分片不同。请清空列表，勾选“创建全新任务”后重新选择文件。');
-      } else {
-        await api(`/api/uploads/${info.id}/chunks/${index}`,{method:'PUT',body:data,headers:{'Content-Type':'application/octet-stream','X-Chunk-SHA256':digest},signal,attempts:6});
-        job.done+=chunk.size;job.transferred+=chunk.size;
+  async function runPhase(name,total,totalChunks) {
+    beginPhase(job,name,total);paintJob(job);
+    let cursor=0,checked=0;
+    const worker=async()=>{
+      while(cursor<info.total) {
+        checkAbort(signal);
+        const index=cursor++;
+        if(has(index)!==(name==='verifying'))continue;
+        const chunk=job.file.slice(index*info.chunk_size,Math.min((index+1)*info.chunk_size,job.file.size));
+        const data=await chunk.arrayBuffer();
+        checkAbort(signal);
+        const digest=await sha256(data);
+        checkAbort(signal);
+        if(has(index)) {
+          const hashes=await hashPage(index);
+          if(hashes[String(index)]!==digest) throw new Error('文件内容与已上传分片不同。请清空列表，勾选“创建全新任务”后重新选择文件。');
+        } else {
+          await api(`/api/uploads/${info.id}/chunks/${index}`,{method:'PUT',body:data,headers:{'Content-Type':'application/octet-stream','X-Chunk-SHA256':digest},signal,attempts:6});
+          job.done+=chunk.size;job.transferred+=chunk.size;
+        }
+        recordPhaseProgress(job,chunk.size);
+        checked++;
+        job.message=name==='verifying'?`校验 ${checked.toLocaleString()} / ${totalChunks.toLocaleString()} 片`:`${(100*job.done/Math.max(1,job.file.size)).toFixed(1)}% · 上传中`;
+        paintJob(job);
+        // Release the event loop for HTTP origins using the SHA fallback.
+        if(checked%8===0) await delay(0,signal);
       }
-      checked++;
-      job.message=info.received_count?`校验 / 传输 ${checked.toLocaleString()} / ${info.total.toLocaleString()} 片`:`${(100*job.done/Math.max(1,job.file.size)).toFixed(1)}% · 上传中`;
-      paintJob(job);
-      // Release the event loop for HTTP origins using the SHA fallback.
-      if(checked%8===0) await delay(0,signal);
-    }
-  };
-  let firstError;
-  const workers=Array.from({length:Number($('concurrency').value)},()=>worker().catch(error=>{
-    if(!firstError){firstError=error;controller.abort();}
-    throw error;
-  }));
-  await Promise.allSettled(workers);
-  if(firstError) throw firstError;
+    };
+    let firstError;
+    const workers=Array.from({length:Number($('concurrency').value)},()=>worker().catch(error=>{
+      if(!firstError){firstError=error;controller.abort();}
+      throw error;
+    }));
+    await Promise.allSettled(workers);
+    if(firstError)throw firstError;
+  }
+  // Measure local verification and missing-chunk uploads independently, so fast
+  // resume checks never inflate the network speed or underestimate upload time.
+  if(info.received_count)await runPhase('verifying',info.received_bytes,info.received_count);
+  if(info.received_bytes<job.file.size)await runPhase('uploading',job.file.size-info.received_bytes,info.total-info.received_count);
   checkAbort(signal);
-  job.message='确认全部分片，保存文件…';paintJob(job);
+  job.phase='finalizing';job.message='确认全部分片，保存文件…';paintJob(job);
   const result=await api(`/api/uploads/${info.id}/complete`,{method:'POST',signal,attempts:3});
-  job.state='complete';job.done=job.file.size;job.filename=result.filename;job.message='✓ 已保存到服务器';paintJob(job);
+  freezeTiming(job);job.state='complete';job.done=job.file.size;job.filename=result.filename;job.message='✓ 已保存到服务器';paintJob(job);
 }
 async function start() {
   if(running) {paused=true;controller.abort();return;}
   if(!connected) {notice('请先连接服务器。','error');return;}
   running=true;paused=false;controller=new AbortController();updateControls();notice('');
+  const paintTimer=setInterval(()=>jobs.filter(job=>job.state==='uploading').forEach(paintJob),1000);
   let current;
   try {
     // Freeze this batch. Files added while uploading remain queued for the next start.
@@ -238,6 +300,7 @@ async function start() {
     }
     notice('本批文件已全部接收并保存。','success');
   } catch(error) {
+    if(current)freezeTiming(current);
     if(paused) {
       if(current){current.state='paused';current.message='已暂停 · 点击继续上传';paintJob(current);}
       notice('传输已暂停。已确认的分片会被保留，可随时继续。');
@@ -247,6 +310,7 @@ async function start() {
       paused=true;
     }
   } finally {
+    clearInterval(paintTimer);
     running=false;updateControls();refreshHistory().catch(()=>{});
   }
 }

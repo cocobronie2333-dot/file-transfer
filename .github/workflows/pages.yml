@@ -29,6 +29,7 @@ jobs:
           node tests/test_sha256.cjs
           node tests/test_frontend.cjs
           node tests/test_login.cjs
+          node tests/test_eta.cjs
       - uses: actions/configure-pages@v5
       - name: Upload only the public frontend
         uses: actions/upload-pages-artifact@v3

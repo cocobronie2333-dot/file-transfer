@@ -25,7 +25,7 @@ async function scenario({resumed=[],conflict=false,empty=false,transient=false}=
     sessionStorage:{getItem:()=>null,setItem(){},removeItem(){}},window:{addEventListener(){},location:{hostname:'localhost',origin:'http://localhost',protocol:'http:'}},
     URL,
     crypto:webcrypto,TextEncoder,Uint8Array,Uint32Array,DataView,ArrayBuffer,DOMException,AbortController,
-    performance,setTimeout,clearTimeout,atob,btoa,console,
+    performance,setTimeout,clearTimeout,setInterval,clearInterval,atob,btoa,console,
     fetch:async(url,options)=>{
       assert.equal(new URL(url).origin,'https://upload.example.com');
       assert.equal(options.headers.Authorization,'Bearer upload-test-key');
@@ -56,8 +56,14 @@ async function scenario({resumed=[],conflict=false,empty=false,transient=false}=
   context.testFile=new File([data],'sample.bin',{lastModified:123456789});
   await vm.runInContext('connected=true; apiBase="https://upload.example.com"; token="upload-test-key"; addFiles([testFile]); start()',context);
   const state=vm.runInContext('jobs[0].state',context);
-  if(conflict){assert.equal(state,'error');assert.equal(complete,false);}
-  else {assert.equal(state,'complete');assert.equal(complete,true);assert.equal(requests.length,Math.ceil(data.length/1_000_000)-resumed.length);}
+  if(conflict){assert.equal(state,'error');assert.equal(complete,false);assert.equal(requests.length,0);}
+  else {
+    assert.equal(state,'complete');assert.equal(complete,true);assert.equal(requests.length,Math.ceil(data.length/1_000_000)-resumed.length);
+    assert.equal(vm.runInContext('jobs[0].transferred',context),requests.reduce((sum,r)=>sum+r.length,0));
+    assert.equal(vm.runInContext('jobs[0].activeSince',context),null);
+    assert.match(vm.runInContext('jobs[0].ui.timing.textContent',context),/已用时/);
+    if(requests.length)assert.equal(vm.runInContext('jobs[0].timingPhase.total',context),requests.reduce((sum,r)=>sum+r.length,0));
+  }
   return requests;
 }
 (async()=>{
