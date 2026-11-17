@@ -51,3 +51,7 @@ node tests/test_sha256.cjs
 node tests/test_frontend.cjs
 node tests/test_login.cjs
 ```
+
+## Receiving backend
+
+The default receiving URL is `https://file-transfer.tail65475f.ts.net`, provided by persistent Tailscale Funnel. The backend remains on the receiving computer. The owner must keep the computer online and preserve its Tailscale device and tailnet identity. Tailscale Funnel has provider bandwidth limits and is currently beta; the Personal plan is for non-commercial use. Backend authentication is still required, and access keys are never committed here.

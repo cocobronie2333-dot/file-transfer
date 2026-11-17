@@ -1,5 +1,5 @@
-// Public backend URL. Never put an access key in this file.
-// This temporary tunnel URL changes if its process is restarted.
+// Fixed Tailscale Funnel receiver. Never put an access key in this file.
+// Keep the receiving device and tailnet identity unchanged to retain this URL.
 globalThis.FILE_BRIDGE_CONFIG = Object.freeze({
-  apiBase: "https://host-below-shoppers-with.trycloudflare.com"
+  apiBase: "https://file-transfer.tail65475f.ts.net"
 });
