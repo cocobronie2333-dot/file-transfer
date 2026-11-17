@@ -306,7 +306,13 @@ async function connect(event, restored=null) {
     connected=false;token='';apiBase='';saveSession(null);
     const message=error.status===404?'未找到接收接口，请填写后端服务地址，而不是 GitHub Pages 页面地址。':
       error instanceof TypeError || error.name==='AbortError'?'无法连接接收服务，请检查 HTTPS、网络及后端 allowed_origins 配置。':error.message;
-    showLogin(message);
+    const updatedBase=globalThis.FILE_BRIDGE_CONFIG?.apiBase;
+    if(restored && updatedBase && updatedBase!==restored.apiBase && !error.status) {
+      // Update the address only. Never forward a saved key to a different server.
+      $('serverUrl').value=updatedBase;
+      $('token').value='';
+      showLogin('原接收地址已不可用，已填入更新后的地址。请重新输入访问密钥登录。');
+    } else showLogin(message);
   } finally {loginBusy=false;loginController=null;$('loginButton').textContent='登录 →';updateControls();}
 }
 $('loginForm').addEventListener('submit',connect);

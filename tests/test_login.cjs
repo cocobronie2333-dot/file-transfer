@@ -8,11 +8,11 @@ class Element {
   replaceChildren(){this.children=[];} insertRow(){const row=new Element();this.append(row);return row;}
   insertCell(){const cell=new Element();this.append(cell);return cell;}
 }
-function setup({saved,invalidKey=false,storageDisabled=false,configuredBase='',origin='https://owner.github.io',status404=false}={}) {
+function setup({saved,invalidKey=false,storageDisabled=false,configuredBase='',origin='https://owner.github.io',status404=false,networkFailure=false}={}) {
   const elements=new Map(),storage=new Map(),requests=[];
   if(saved)storage.set('fileBridgeSession',JSON.stringify(saved));
   const element=id=>{if(!elements.has(id))elements.set(id,new Element());return elements.get(id);};
-  const mode={invalidKey,status404};
+  const mode={invalidKey,status404,networkFailure};
   const context=vm.createContext({
     document:{getElementById:element,createElement:()=>new Element(),querySelectorAll:()=>[]},
     sessionStorage:{getItem:key=>{if(storageDisabled)throw new Error('storage denied');return storage.get(key)||null;},setItem:(key,value)=>{if(storageDisabled)throw new Error('storage denied');storage.set(key,value);},removeItem:key=>storage.delete(key)},
@@ -20,6 +20,7 @@ function setup({saved,invalidKey=false,storageDisabled=false,configuredBase='',o
     URL,DOMException,AbortController,setTimeout,clearTimeout,console,
     fetch:async(url,options)=>{
       requests.push({url,options});
+      if(mode.networkFailure)throw new TypeError('Failed to fetch');
       assert.equal(options.credentials,'omit');assert.equal(options.redirect,'error');assert.equal(options.mode,'cors');
       if(mode.invalidKey)return {ok:false,status:401,json:async()=>({detail:'访问密钥不正确。'})};
       if(mode.status404)return {ok:false,status:404,json:async()=>({detail:'Not Found'})};
@@ -69,6 +70,11 @@ async function restored(test) {await run(test,'(async()=>{while(loginBusy) await
   assert(restore.requests.every(r=>r.options.headers.Authorization==='Bearer saved-key'));
   const expired=setup({saved:session,invalidKey:true});await restored(expired);
   assert.equal(run(expired,'connected'),false);assert.equal(expired.storage.size,0);
+  const replaced=setup({saved:session,configuredBase:'https://replacement.example.com',networkFailure:true});await restored(replaced);
+  assert.equal(replaced.element('serverUrl').value,'https://replacement.example.com');
+  assert.equal(replaced.element('token').value,'');assert.equal(replaced.storage.size,0);
+  assert(replaced.requests.every(r=>r.url.startsWith(session.apiBase+'/api/')));
+  assert.match(replaced.element('loginError').textContent,/重新输入/);
   const revoked=setup();await login(revoked);revoked.mode.invalidKey=true;
   await assert.rejects(()=>run(revoked,"api('/api/status')"));
   assert.equal(run(revoked,'connected'),false);assert.equal(revoked.storage.size,0);
